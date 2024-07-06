@@ -1,109 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-modal';
-import './EventModal.css';
 
-const EventModal = ({ isOpen, onClose, onSave, event, columns = [], users = [] }) => {
+const EventModal = ({ isOpen, onClose, onSave, event, columns }) => {
   const [title, setTitle] = useState('');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  const [columnValues, setColumnValues] = useState({});
+  const [status, setStatus] = useState('');
 
   useEffect(() => {
     if (event) {
       setTitle(event.title || '');
-      setStart(event.start || '');
-      setEnd(event.end || '');
-      
-      const newColumnValues = {};
-      if (event.extendedProps && event.extendedProps.column_values) {
-        event.extendedProps.column_values.forEach(cv => {
-          newColumnValues[cv.id] = cv.value;
-        });
-      }
-      setColumnValues(newColumnValues);
-    } else {
-      setTitle('');
-      setStart('');
-      setEnd('');
-      setColumnValues({});
+      setStart(event.start ? formatDateTimeForInput(new Date(event.start)) : '');
+      setEnd(event.end ? formatDateTimeForInput(new Date(event.end)) : '');
+      setStatus(event.extendedProps?.status__1 || '');
     }
   }, [event]);
 
+  const formatDateTimeForInput = (date) => {
+    const offset = date.getTimezoneOffset();
+    const adjustedDate = new Date(date.getTime() - (offset*60*1000));
+    return adjustedDate.toISOString().slice(0, 16);
+  };
+
   const handleSave = () => {
-    const eventData = {
+    onSave({
       id: event?.id,
       title,
       start,
       end,
-      ...columnValues
-    };
-    onSave(eventData);
+      status__1: status
+    });
   };
 
-  const handleColumnChange = (columnId, value) => {
-    setColumnValues(prev => ({ ...prev, [columnId]: value }));
-  };
-
-  const renderColumnInput = (column) => {
-    if (!column) return null;
-
-    switch (column.type) {
-      case 'text':
-      case 'long-text':
-        return (
-          <input
-            type="text"
-            value={columnValues[column.id] || ''}
-            onChange={(e) => handleColumnChange(column.id, e.target.value)}
-            placeholder={column.title}
-          />
-        );
-      case 'number':
-        return (
-          <input
-            type="number"
-            value={columnValues[column.id] || ''}
-            onChange={(e) => handleColumnChange(column.id, e.target.value)}
-            placeholder={column.title}
-          />
-        );
-      case 'status':
-      case 'color':
-        return (
-          <select
-            value={columnValues[column.id] || ''}
-            onChange={(e) => handleColumnChange(column.id, e.target.value)}
-          >
-            <option value="">Select {column.title}</option>
-            {(column.labels || []).map((label, index) => (
-              <option key={index} value={label.id}>{label.name}</option>
-            ))}
-          </select>
-        );
-      case 'date':
-        return (
-          <input
-            type="date"
-            value={columnValues[column.id] || ''}
-            onChange={(e) => handleColumnChange(column.id, e.target.value)}
-          />
-        );
-      case 'people':
-        return (
-          <select
-            value={columnValues[column.id] || ''}
-            onChange={(e) => handleColumnChange(column.id, e.target.value)}
-          >
-            <option value="">Select {column.title}</option>
-            {users.map(user => (
-              <option key={user.id} value={user.id}>{user.name}</option>
-            ))}
-          </select>
-        );
-      default:
-        return null;
-    }
-  };
+  const statusColumn = columns.find(col => col.id === 'status__1');
+  const statusOptions = statusColumn?.options || [];
 
   return (
     <Modal
@@ -139,12 +69,17 @@ const EventModal = ({ isOpen, onClose, onSave, event, columns = [], users = [] }
           onChange={(e) => setEnd(e.target.value)}
         />
       </div>
-      {columns.map(column => (
-        <div key={column.id} className="form-group">
-          <label>{column.title}</label>
-          {renderColumnInput(column)}
-        </div>
-      ))}
+      <div className="form-group">
+        <label>Status</label>
+        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">Select Status</option>
+          {statusOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="button-group">
         <button onClick={handleSave}>Save</button>
         <button onClick={onClose}>Cancel</button>

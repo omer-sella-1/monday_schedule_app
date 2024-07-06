@@ -58,8 +58,11 @@ const App = () => {
       }`;
   
       const response = await monday.api(query);
+      console.log("API Response:", JSON.stringify(response, null, 2));
+  
       if (response.data?.boards[0]?.items_page?.items) {
         const calendarEvents = convertToCalendarEvents(response.data.boards[0].items_page.items);
+        console.log("Calendar events:", JSON.stringify(calendarEvents, null, 2));
         setEvents(calendarEvents);
       } else {
         console.error("Unexpected response structure:", response);
@@ -102,11 +105,14 @@ const App = () => {
       const response = await monday.api(query);
       if (response.data?.boards[0]?.columns) {
         const columnsWithSettings = response.data.boards[0].columns.map(column => {
-          if (column.type === 'color' || column.type === 'dropdown') {
+          if (column.type === 'status' || column.type === 'color') {
             const settings = JSON.parse(column.settings_str);
             return {
               ...column,
-              options: settings.labels
+              options: settings.labels.map(label => ({
+                id: label.id,
+                name: label.name
+              }))
             };
           }
           return column;
@@ -117,25 +123,41 @@ const App = () => {
       }
     } catch (error) {
       console.error("Error fetching board columns:", error);
-      if (error.errorMessage) {
-        console.error("GraphQL error in fetchBoardColumns:", error.errorMessage);
-      }
     }
   };
 
   const convertToCalendarEvents = (items) => {
+    console.log("Raw items:", JSON.stringify(items, null, 2));
+    
     return items.map(item => {
+      console.log("Processing item:", item.id);
       const startDateColumn = item.column_values.find(col => col.id === "date4");
       const endDateColumn = item.column_values.find(col => col.id === "date__1");
       
+      console.log("Start date column:", startDateColumn);
+      console.log("End date column:", endDateColumn);
+  
       const parseDate = (dateValue) => {
-        if (!dateValue) return null;
+        if (!dateValue) {
+          console.log("No date value provided");
+          return null;
+        }
         try {
+          console.log("Parsing date value:", dateValue);
           const { date, time } = JSON.parse(dateValue);
-          if (!date) return null;
-          // Create date in local timezone (Israel/Jerusalem)
-          const dateTime = new Date(`${date}T${time || '00:00:00'}`);
-          if (isNaN(dateTime.getTime())) return null;
+          if (!date) {
+            console.log("No date in parsed value");
+            return null;
+          }
+          // Create date in UTC
+          const dateTime = new Date(`${date}T${time || '00:00:00'}Z`);
+          if (isNaN(dateTime.getTime())) {
+            console.log("Invalid date time");
+            return null;
+          }
+          // Add 3 hours to match Monday.com display
+          dateTime.setHours(dateTime.getHours());
+          console.log("Adjusted date time:", dateTime);
           return dateTime;
         } catch (error) {
           console.error("Error parsing date:", error);
@@ -146,8 +168,11 @@ const App = () => {
       const start = parseDate(startDateColumn?.value);
       const end = parseDate(endDateColumn?.value);
   
+      console.log("Parsed start:", start);
+      console.log("Parsed end:", end);
+  
       if (start) {
-        return {
+        const event = {
           id: item.id,
           title: item.name,
           start: start,
@@ -157,7 +182,10 @@ const App = () => {
             column_values: item.column_values
           }
         };
+        console.log("Created event:", event);
+        return event;
       }
+      console.log("Skipping item due to invalid start date");
       return null;
     }).filter(event => event !== null);
   };
@@ -207,9 +235,12 @@ const App = () => {
   const updateMondayItem = async (event) => {
     try {
       const formatDate = (dateObj) => {
-        const date = dateObj.toISOString().split('T')[0];
-        const time = dateObj.toTimeString().split(' ')[0];
-        return { date, time };
+        // Subtract 3 hours to align with Monday.com time
+        const adjustedDate = new Date(dateObj.getTime() - (3 * 60 * 60 * 1000));
+        return {
+          date: adjustedDate.toISOString().split('T')[0],
+          time: adjustedDate.toTimeString().split(' ')[0]
+        };
       };
   
       const startDate = new Date(event.start);
@@ -230,10 +261,10 @@ const App = () => {
         }
       }`;
   
-      console.log("Mutation:", mutation); // Log the mutation for debugging
+      console.log("Mutation:", mutation);
   
       const response = await monday.api(mutation);
-      console.log("API Response:", response); // Log the full response
+      console.log("API Response:", response);
   
       if (response.data?.change_multiple_column_values?.id) {
         console.log("Item updated successfully:", response.data.change_multiple_column_values.id);
@@ -255,7 +286,7 @@ const App = () => {
   };
 
   const handleEventSave = async (eventData) => {
-    const formatDate = (dateString) => {
+    const formatDateForMonday = (dateString) => {
       const date = new Date(dateString);
       return {
         date: date.toISOString().split('T')[0],
@@ -264,16 +295,10 @@ const App = () => {
     };
   
     const columnValues = {
-      date4: formatDate(eventData.start),
-      date__1: formatDate(eventData.end)
+      date4: formatDateForMonday(eventData.start),
+      date__1: formatDateForMonday(eventData.end),
+      status__1: { index: parseInt(eventData.status__1) }
     };
-  
-    // Add other column values here if needed
-    columns.forEach(column => {
-      if (eventData[column.id] && column.type !== 'date') {
-        columnValues[column.id] = eventData[column.id];
-      }
-    });
   
     const mutation = eventData.id
       ? `mutation {
@@ -341,7 +366,6 @@ const App = () => {
         onSave={handleEventSave}
         event={selectedEvent}
         columns={columns}
-        users={users}
       />
     </div>
   );
