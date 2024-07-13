@@ -8,6 +8,10 @@ import interactionPlugin from "@fullcalendar/interaction";
 import EventModal from './components/EventModal';
 import Modal from 'react-modal';
 import moment from 'moment';
+import "monday-ui-react-core/tokens";
+import { Button, TextField } from "monday-ui-react-core";
+import { ThemeProvider } from "monday-ui-react-core";
+
 
 
 
