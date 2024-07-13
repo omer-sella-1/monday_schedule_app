@@ -12,13 +12,14 @@ const EventModal = ({ isOpen, onClose, onSave, event, columns }) => {
       setTitle(event.title || '');
       setStart(event.start ? formatDateTimeForInput(new Date(event.start)) : '');
       setEnd(event.end ? formatDateTimeForInput(new Date(event.end)) : '');
-      setStatus(event.extendedProps?.status__1 || '');
+      const statusValue = event.extendedProps?.column_values?.find(col => col.id === 'status__1')?.value;
+      setStatus(statusValue ? JSON.parse(statusValue).index : '');
     }
   }, [event]);
 
   const formatDateTimeForInput = (date) => {
     const offset = date.getTimezoneOffset();
-    const adjustedDate = new Date(date.getTime() - (offset*60*1000));
+    const adjustedDate = new Date(date.getTime() - (offset * 60 * 1000));
     return adjustedDate.toISOString().slice(0, 16);
   };
 
@@ -28,7 +29,7 @@ const EventModal = ({ isOpen, onClose, onSave, event, columns }) => {
       title,
       start,
       end,
-      status__1: status
+      status: status // We're now passing the raw status value
     });
   };
 
@@ -74,7 +75,7 @@ const EventModal = ({ isOpen, onClose, onSave, event, columns }) => {
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">Select Status</option>
           {statusOptions.map((option) => (
-            <option key={option.id} value={option.id}>
+            <option key={option.id} value={option.id} style={{ backgroundColor: option.color }}>
               {option.name}
             </option>
           ))}

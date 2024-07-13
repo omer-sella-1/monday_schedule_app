@@ -7,6 +7,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import EventModal from './components/EventModal';
 import Modal from 'react-modal';
+import moment from 'moment';
 
 
 
@@ -58,11 +59,9 @@ const App = () => {
       }`;
   
       const response = await monday.api(query);
-      console.log("API Response:", JSON.stringify(response, null, 2));
   
       if (response.data?.boards[0]?.items_page?.items) {
         const calendarEvents = convertToCalendarEvents(response.data.boards[0].items_page.items);
-        console.log("Calendar events:", JSON.stringify(calendarEvents, null, 2));
         setEvents(calendarEvents);
       } else {
         console.error("Unexpected response structure:", response);
@@ -103,20 +102,28 @@ const App = () => {
       }`;
   
       const response = await monday.api(query);
+  
       if (response.data?.boards[0]?.columns) {
         const columnsWithSettings = response.data.boards[0].columns.map(column => {
-          if (column.type === 'status' || column.type === 'color') {
-            const settings = JSON.parse(column.settings_str);
-            return {
-              ...column,
-              options: settings.labels.map(label => ({
-                id: label.id,
-                name: label.name
-              }))
-            };
+          if (column.type === 'status' && column.settings_str) {
+            try {
+              const settings = JSON.parse(column.settings_str);
+              if (settings.labels && typeof settings.labels === 'object') {
+                const options = Object.entries(settings.labels).map(([id, name]) => ({
+                  id,
+                  name,
+                  color: settings.labels_colors[id]?.color
+                }));
+                return { ...column, options };
+              }
+            } catch (error) {
+              console.error("Error parsing status column settings:", error);
+            }
           }
           return column;
         });
+        
+        console.log("Columns with settings:", columnsWithSettings);
         setColumns(columnsWithSettings);
       } else {
         console.error("Unexpected response structure for columns:", response);
@@ -126,39 +133,19 @@ const App = () => {
     }
   };
 
+
   const convertToCalendarEvents = (items) => {
-    console.log("Raw items:", JSON.stringify(items, null, 2));
-    
     return items.map(item => {
-      console.log("Processing item:", item.id);
       const startDateColumn = item.column_values.find(col => col.id === "date4");
       const endDateColumn = item.column_values.find(col => col.id === "date__1");
+      const statusColumn = item.column_values.find(col => col.id === "status__1");
       
-      console.log("Start date column:", startDateColumn);
-      console.log("End date column:", endDateColumn);
-  
       const parseDate = (dateValue) => {
-        if (!dateValue) {
-          console.log("No date value provided");
-          return null;
-        }
+        if (!dateValue) return null;
         try {
-          console.log("Parsing date value:", dateValue);
           const { date, time } = JSON.parse(dateValue);
-          if (!date) {
-            console.log("No date in parsed value");
-            return null;
-          }
-          // Create date in UTC
-          const dateTime = new Date(`${date}T${time || '00:00:00'}Z`);
-          if (isNaN(dateTime.getTime())) {
-            console.log("Invalid date time");
-            return null;
-          }
-          // Add 3 hours to match Monday.com display
-          dateTime.setHours(dateTime.getHours());
-          console.log("Adjusted date time:", dateTime);
-          return dateTime;
+          if (!date) return null;
+          return moment.utc(`${date}T${time || '00:00:00'}`).local();
         } catch (error) {
           console.error("Error parsing date:", error);
           return null;
@@ -166,30 +153,40 @@ const App = () => {
       };
   
       const start = parseDate(startDateColumn?.value);
-      const end = parseDate(endDateColumn?.value);
-  
-      console.log("Parsed start:", start);
-      console.log("Parsed end:", end);
-  
-      if (start) {
-        const event = {
-          id: item.id,
-          title: item.name,
-          start: start,
-          end: end || start,
-          allDay: !startDateColumn.value.includes('time'),
-          extendedProps: {
-            column_values: item.column_values
-          }
-        };
-        console.log("Created event:", event);
-        return event;
-      }
-      console.log("Skipping item due to invalid start date");
-      return null;
-    }).filter(event => event !== null);
-  };
+    const end = parseDate(endDateColumn?.value);
 
+    if (start) {
+      let status = null;
+      let backgroundColor = null;
+      let statusLabel = '';
+      
+      if (statusColumn && statusColumn.value) {
+        try {
+          status = JSON.parse(statusColumn.value);
+          backgroundColor = status.color;
+          statusLabel = statusColumn.text || '';
+        } catch (error) {
+          console.error("Error parsing status:", error);
+        }
+      }
+
+      return {
+        id: item.id,
+        title: item.name,
+        start: start.toDate(),
+        end: end ? end.toDate() : start.toDate(),
+        allDay: !startDateColumn.value.includes('time'),
+        extendedProps: {
+          column_values: item.column_values,
+          status: status,
+          statusLabel: statusLabel
+        },
+        backgroundColor: backgroundColor
+      };
+    }
+    return null;
+  }).filter(event => event !== null);
+};
   const handleDateSelect = (selectInfo) => {
     const startDate = selectInfo.startStr;
     const endDate = selectInfo.endStr;
@@ -234,21 +231,18 @@ const App = () => {
 
   const updateMondayItem = async (event) => {
     try {
-      const formatDate = (dateObj) => {
-        // Subtract 3 hours to align with Monday.com time
-        const adjustedDate = new Date(dateObj.getTime() - (3 * 60 * 60 * 1000));
+      const formatDate = (dateString) => {
+        // Convert local time to UTC
+        const date = moment(dateString).utc();
         return {
-          date: adjustedDate.toISOString().split('T')[0],
-          time: adjustedDate.toTimeString().split(' ')[0]
+          date: date.format('YYYY-MM-DD'),
+          time: date.format('HH:mm:ss')
         };
       };
   
-      const startDate = new Date(event.start);
-      const endDate = new Date(event.end);
-      
       const columnValues = {
-        date4: formatDate(startDate),
-        date__1: formatDate(endDate)
+        date4: formatDate(event.start),
+        date__1: formatDate(event.end)
       };
   
       const mutation = `mutation {
@@ -264,7 +258,6 @@ const App = () => {
       console.log("Mutation:", mutation);
   
       const response = await monday.api(mutation);
-      console.log("API Response:", response);
   
       if (response.data?.change_multiple_column_values?.id) {
         console.log("Item updated successfully:", response.data.change_multiple_column_values.id);
@@ -285,19 +278,22 @@ const App = () => {
     }
   };
 
+
   const handleEventSave = async (eventData) => {
     const formatDateForMonday = (dateString) => {
-      const date = new Date(dateString);
+      // Convert local time to UTC
+      const date = moment(dateString).utc();
       return {
-        date: date.toISOString().split('T')[0],
-        time: date.toTimeString().split(' ')[0]
+        date: date.format('YYYY-MM-DD'),
+        time: date.format('HH:mm:ss')
       };
     };
   
     const columnValues = {
+      name: eventData.title,
       date4: formatDateForMonday(eventData.start),
       date__1: formatDateForMonday(eventData.end),
-      status__1: { index: parseInt(eventData.status__1) }
+      status__1: eventData.status ? { index: parseInt(eventData.status) } : null
     };
   
     const mutation = eventData.id
@@ -322,7 +318,6 @@ const App = () => {
   
     try {
       const response = await monday.api(mutation);
-      console.log("API Response:", response);
       if (response.data?.change_multiple_column_values?.id || response.data?.create_item?.id) {
         console.log(eventData.id ? "Item updated successfully" : "New item created successfully");
         await fetchBoardItems(context.boardIds[0]);
@@ -339,26 +334,44 @@ const App = () => {
     setModalIsOpen(false);
   };
 
+  const renderEventContent = (eventInfo) => {
+    return (
+      <div style={{ lineHeight: '1.2', overflow: 'hidden' }}>
+        <div>{eventInfo.timeText}</div>
+        <div style={{ fontWeight: 'bold' }}>{eventInfo.event.title}</div>
+        {eventInfo.event.extendedProps.statusLabel && (
+          <div style={{ fontSize: '0.8em', opacity: 0.7 }}>
+            {eventInfo.event.extendedProps.statusLabel}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="App">
       <div className="calendar-container">
-        <FullCalendar
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="dayGridMonth"
-          headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,timeGridWeek,timeGridDay'
-          }}
-          events={events}
-          editable={true}
-          selectable={true}
-          select={handleDateSelect}
-          eventClick={handleEventClick}
-          eventDrop={handleEventDrop}
-          eventResize={handleEventResize}
-          height="100%"
-        />
+      <FullCalendar
+  plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+  initialView="dayGridMonth"
+  headerToolbar={{
+    left: 'prev,next today',
+    center: 'title',
+    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+  }}
+  events={events}
+  editable={true}
+  selectable={true}
+  select={handleDateSelect}
+  eventClick={handleEventClick}
+  eventDrop={handleEventDrop}
+  eventResize={handleEventResize}
+  height="100%"
+  timeZone="local"
+  eventContent={renderEventContent}
+  eventDisplay="block"
+  eventMinHeight={40}
+/>
       </div>
       <EventModal
         isOpen={modalIsOpen}
